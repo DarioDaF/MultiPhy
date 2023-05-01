@@ -8,6 +8,22 @@ export function bind<T extends Function>(original: T, context: ClassMethodDecora
   })
 }
 
+export function cache<T>(init: () => Promise<T>) {
+  let result: T | undefined = undefined
+  return async () => {
+    if (result === undefined) {
+      result = await init()
+    }
+    return result
+  }
+}
+
+export function delay(ms: number) {
+  return new Promise<void>(resolve => {
+    setTimeout(resolve, ms)
+  })
+}
+
 const symEventList = Symbol("EventList")
 interface EventOfList {
   name: string

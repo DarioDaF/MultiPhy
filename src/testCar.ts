@@ -153,6 +153,8 @@ class WheelAssembly {
 
   wheel() { return this.ball }
 
+  getRBs() { return [ this.sbody, this.ball ] }
+
   setVelocity(vel: number, factor: number) {
     this.rj.get().configureMotorVelocity(vel, factor)
     this.ball.get().wakeUp()
@@ -194,21 +196,16 @@ export class Car {
     this.cap = new RBHandle(_cap)
     this.pj1 = new IJHandle<PrismaticImpulseJointWithAxis>(_pj1)
 
-    this.rocket = new Rocket(this.cap, P(0, 0), P(0, -15))
+    this.rocket = new Rocket(this.cap, P(0, 0), P(0, -25))
 
     setSpring(_pj1, 1, 100, 1)
 
     this.zeroJoint()
 
-    /*
-    this.w1.wheel().get().collider(0).setRestitution(0.95)
-    this.w2.wheel().get().collider(0).setRestitution(0.95)
-    */
+    this.w1.wheel().get().collider(0).setFriction(10)
+    this.w2.wheel().get().collider(0).setFriction(10)
   }
 
-  update(dt: number) {
-    // Graphics stuff
-  }
   step() {
     // Physics stuff
     this.rocket.step()
@@ -225,7 +222,8 @@ export class Car {
       return
     */
     this._speed = speed
-    this.w1.setVelocity(this.maxSpeed * this._speed, 250)
+    this.w1.setVelocity(this.maxSpeed * this._speed, 300)
+    this.w2.setVelocity(this.maxSpeed * this._speed, 300)
     /*
     this.rj1.configureMotorVelocity(this.maxSpeed * this._speed, 5)
     this.r1.wakeUp()
@@ -233,6 +231,10 @@ export class Car {
   }
 
   getBody() { return this.body }
+
+  getRBs() {
+    return [ this.body, this.cap, ...this.w1.getRBs(), ...this.w2.getRBs() ]
+  }
 
   zeroJoint() {
     for (let j of [ this.pj1, this.w1, this.w2 ]) {

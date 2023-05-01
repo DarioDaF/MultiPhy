@@ -1,18 +1,22 @@
-import { assert } from "./helpers/func"
+import { assert, cache } from "./helpers/func"
 
-type Future<T> = {
-  resolve: (data: T) => void
-  reject: () => void
-}
-
-async function getConnInfo() {
+const getConnInfo = cache(async () => {
   const res = await fetch('dist/conninfo.json')
   return await res.json() as {
     WSUrl: string
     ICEUrl: string
   }
+})
+
+const getIce = cache(async () => {
+  const response = await fetch((await getConnInfo()).ICEUrl)
+  return await response.json() as RTCIceServer[]
+})
+
+type Future<T> = {
+  resolve: (data: T) => void
+  reject: () => void
 }
-const connInfo = await getConnInfo()
 
 export class PromiseMessageQueue<T> {
   private queue: T[] = []
@@ -50,35 +54,37 @@ export class PromiseMessageQueue<T> {
 
 const WS_PREFIX = 'multiphy'
 
-export function CreateWS(room?: string) {
-  const wsurl = new URL(connInfo.WSUrl)
-  wsurl.searchParams.append('prefix', WS_PREFIX)
-  wsurl.searchParams.append('room', room ?? '')
-  const ws = new WebSocket(wsurl)
+interface IChannel {
+  onmessage: ((ev: MessageEvent) => void) | null
+  onclose: ((ev: CloseEvent) => void) | null
+}
 
-  const pmq = new PromiseMessageQueue<any>()
-  ws.onmessage = (e) => {
+function attachPromiseMessageQueue<T>(ch: IChannel) {
+  const pmq = new PromiseMessageQueue<T>()
+  ch.onmessage = (e) => {
     pmq.addData(JSON.parse(e.data))
   }
+  ch.onclose = (e) => {
+    pmq.close()
+  }
+  return pmq
+}
+
+export async function CreateWS(room?: string, forceHost = false) {
+  const wsurl = new URL((await getConnInfo()).WSUrl)
+  wsurl.searchParams.append('prefix', WS_PREFIX)
+  wsurl.searchParams.append('room', room ?? '')
+  if (forceHost) {
+    wsurl.searchParams.append('forceHost', 'true')
+  }
+  const ws = new WebSocket(wsurl)
   ws.onerror = (e) => {
     console.error(e)
   }
-  ws.onclose = (e) => {
-    pmq.close()
-  }
-  return { ws, pmq }
+  return ws
 }
 
-let _iceServers: RTCIceServer[] | undefined = undefined;
-async function getIce(): Promise<RTCIceServer[]> {
-  if (_iceServers === undefined) {
-    const response = await fetch(connInfo.ICEUrl)
-    _iceServers = await response.json()
-  }
-  return _iceServers!
-}
-
-export async function CreateRTC(room?: string) {
+export async function CreateRTC(room?: string, forceHost = false) {
 
   const RTCSettings: RTCConfiguration = {
     iceServers: [
@@ -90,26 +96,28 @@ export async function CreateRTC(room?: string) {
   try {
     RTCSettings.iceServers = await getIce()
   } catch {}
+  console.log(RTCSettings.iceServers)
 
-  const cws = CreateWS(room)
+  const ws = await CreateWS(room, forceHost)
+  const pmq = attachPromiseMessageQueue<{ Event: string, Data: any }>(ws)
 
   function sendJSON(obj: any) {
-    cws.ws.send(JSON.stringify(obj))
+    ws.send(JSON.stringify(obj))
   }
 
-  const isHost = room === undefined
+  const isHost = forceHost || (room === undefined)
 
   let ev
   if (isHost) {
     console.log("Starting host")
 
-    ev = await cws.pmq.waitData()
+    ev = await pmq.waitData()
     assert(ev.Event === 'newRoom')
     room = ev.Data
     console.log(`Waiting for connection on room ${room}`)
 
     // Got new client
-    ev = await cws.pmq.waitData()
+    ev = await pmq.waitData()
     assert(ev.Event === 'newClient')
     console.log("Got new client")
 
@@ -135,13 +143,13 @@ export async function CreateRTC(room?: string) {
     sendJSON({ Event: 'offer', Data: offer })
     console.log("Sent offer")
 
-    ev = await cws.pmq.waitData()
+    ev = await pmq.waitData()
     assert(ev.Event === 'answer')
     myConn.setRemoteDescription(ev.Data)
     console.log("Received answer")
 
     while (true) {
-      ev = await Promise.any([ connPromise, cws.pmq.waitData() ])
+      ev = await Promise.any([ connPromise, pmq.waitData() ])
       if (ev === undefined) {
         break // Connected
       }
@@ -152,13 +160,13 @@ export async function CreateRTC(room?: string) {
       console.log("Received ICE")
     }
 
-    cws.ws.close()
+    ws.close()
 
     return { myConn, channel }
   } else {    
     console.log("Starting client")
 
-    ev = await cws.pmq.waitData()
+    ev = await pmq.waitData()
     assert(ev.Event === 'offer')
     console.log("Received offer")
 
@@ -191,7 +199,7 @@ export async function CreateRTC(room?: string) {
     console.log("Sent answer")
 
     while (true) {
-      ev = await Promise.any([ connPromise, cws.pmq.waitData() ])
+      ev = await Promise.any([ connPromise, pmq.waitData() ])
       if (ev === undefined) {
         break // Connected
       }
@@ -202,7 +210,7 @@ export async function CreateRTC(room?: string) {
       console.log("Received ICE")
     }
 
-    cws.ws.close()
+    ws.close()
 
     return { myConn, channel: await channelPromise }
   }

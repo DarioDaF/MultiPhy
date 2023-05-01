@@ -10,13 +10,29 @@ import './keyInputPlugin'
 import RAPIER from '@dimforge/rapier2d'
 
 import { SimWorldView, DrawnRect } from './designer'
-import { HandleMultyplayerIO } from './handleMultiplayerIO'
+import { HandleMultyplayerIO, IORemoteEvent } from './handleMultiplayerIO'
 import { IOData, IWorldStepper, WorldHandler } from './wolrdHandler'
-import { setContextWorld } from './worldHandleManager'
+import { RBHandle, setContextWorld } from './worldHandleManager'
+import { CreateRTC, CreateWS } from './rtcChannel'
+import { CreateMap } from './testMap'
+import { delay } from './helpers/func'
+import { Car } from './testCar'
+import { PMath as PM } from './helpers/math'
+
+const search = new URLSearchParams(location.search)
 
 // Needed if RAPIER is loaded as "-compat" module to register the wasm code
 const COMPAT_RAPIER = RAPIER as { init?(): Promise<void> }
 await COMPAT_RAPIER.init?.()
+
+function* getRBColliders(rbs: RBHandle[]) {
+  for (const _rb of rbs) {
+    const rb = _rb.get()
+    for (let i = 0; i < rb.numColliders(); ++i) {
+      yield rb.collider(i)
+    }  
+  }
+}
 
 const w = new RAPIER.World({ x: 0, y: 9.81 }) // Positive gravity to match Y positive downward in graphics
 setContextWorld(w) // Set context
@@ -24,14 +40,7 @@ window.world = w
 const wview = new SimWorldView({ x: 0, y: 0 })
 const wviewOld = new SimWorldView({ x: 0, y: 0 })
 
-const groundColliderDesc = RAPIER.ColliderDesc.cuboid(5.0, 0.1)
-groundColliderDesc.setTranslation(6.0, 5.0)
-w.createCollider(groundColliderDesc)
-
-w.createCollider(
-  RAPIER.ColliderDesc.cuboid(5.0, 0.1)
-    .setTranslation(6.0, 10.0)
-)
+const gameMap = CreateMap()
 
 //RAPIER.ColliderDesc.roundConvexPolyline()
 //https://github.com/schteppe/poly-decomp.js/ Too many polys???
@@ -40,24 +49,18 @@ w.createCollider(
 //https://github.com/dimforge/nphysics ?
 //https://github.com/jrouwe/JoltPhysics Look here !!!
 
-// Create a dynamic rigidBody.
-const rigidBodyDesc = RAPIER.RigidBodyDesc.dynamic()
-rigidBodyDesc.setTranslation(6.0, 1.0)
-const rigidBody = w.createRigidBody(rigidBodyDesc)
-rigidBody.addTorque(-0.5, true)
-
-// Create and attach collider to rigidBody.
-//const colliderDesc = RAPIER.ColliderDesc.cuboid(0.5, 0.5)
-const colliderDesc = RAPIER.ColliderDesc.capsule(0.2, 0.2)
-w.createCollider(colliderDesc, rigidBody)
-
 const app = new PIXI.Application({
   view: document.getElementById('screen') as HTMLCanvasElement,
 })
 window.app = app // Setup global app
 
-app.stage.addChild(wviewOld.view)
-app.stage.addChild(wview.view)
+app.ticker.maxFPS = 30
+w.integrationParameters.dt = 1 / app.ticker.maxFPS
+
+const worldCamera = new PIXI.Container()
+
+worldCamera.addChild(wviewOld.view)
+worldCamera.addChild(wview.view)
 
 const r = new DrawnRect()
 r.g.calculateBounds()
@@ -72,13 +75,30 @@ const t1 = new PIXI.Sprite(tire)
 t1.position = { x: 10, y: 10 }
 app.stage.addChild(t1)
 
-let car = new (await import('./testCar.js')).Car()
-car.getBody().get().setTranslation({ x: 4, y: 0 }, true)
+const car = new Car()
+car.getBody().get().setTranslation({ x: 4, y: 8 }, true)
 car.zeroJoint()
+for (const coll of getRBColliders(car.getRBs())) {
+  coll.setCollisionGroups(0x00010001)
+}
 
-let car2 = new (await import('./testCar.js')).Car()
+const car2 = new Car()
 car2.getBody().get().setTranslation({ x: 4, y: 8 }, true)
 car2.zeroJoint()
+for (const coll of getRBColliders(car2.getRBs())) {
+  coll.setCollisionGroups(0x00020002)
+}
+
+const playerMarker = new PIXI.Graphics()
+{
+  playerMarker.beginFill({ r: 0, g: 200, b: 150 })
+  playerMarker.drawCircle(0, 0, 0.15)
+  playerMarker.endFill()
+}
+wview.prepareDbgGraphics() // Make sure rendering order is correct
+wview.view.addChild(playerMarker)
+
+app.stage.addChild(worldCamera)
 
 class MyWorldStepper implements IWorldStepper {
   step(frame: number, world: RAPIER.World, data: IOData): void {
@@ -105,17 +125,117 @@ const handler = new HandleMultyplayerIO(new WorldHandler(w, new MyWorldStepper()
 
 // @TODO: Should introduce some delay input latency to make rollback not as bad
 
+/*
+const room = search.get('room') ?? ''
+const isHost = search.get('isClient') === null
+
+if (!isHost) {
+  await delay(200)
+}
+*/
+
+const $info = (document.getElementById('info') as HTMLSpanElement)
+
+const { room, isHost } = await new Promise<{ room: string, isHost: boolean }>(resolve => {
+  function returnData(isHost: boolean) {
+    const room = (document.getElementById('room') as HTMLInputElement).value
+    resolve({ room, isHost })
+  }
+
+  (document.getElementById('runHost') as HTMLButtonElement).onclick = e => { returnData(true) }
+  (document.getElementById('runClient') as HTMLButtonElement).onclick = e => { returnData(false) }
+})
+$info.textContent = `Waiting in room ${room} as ${isHost ? 'HOST' : 'CLIENT'} for other user...`
+
+//const rtc = await CreateRTC(room, isHost)
+const rtc = { channel: await CreateWS(room, isHost) }
+
+rtc.channel.onclose = (e) => {
+  $info.textContent = 'Channel closed, reload the page to try again (make sure HOST connects before CLIENT and that the room is available)'
+}
+
+const hasNewClient = new Promise<void>(gotNewClient => {
+  rtc.channel.onmessage = e => {
+    const msg = JSON.parse(e.data)
+    if (msg.Event === 'newClient') {
+      if (isHost) {
+        rtc.channel.send(JSON.stringify({
+          Event: 'newClient',
+          Data: ''
+        }))
+      }
+      gotNewClient()
+      return
+    }
+
+    const { frame, diff } = msg
+    if (frame !== undefined)
+      handler.gotRemoteDiff(frame, diff)
+  }
+})
+
+await hasNewClient
+$info.textContent = `Other client connected`
+
+{
+  const txt = new PIXI.Text('Race to the right ->', {
+    fontSize: 32,
+    fill: '#FF0000'
+  })
+  txt.scale.set(0.02, 0.02)
+  txt.position.set(1, 5)
+  wview.view.addChild(txt)
+}
+
+{
+  const txt = new PIXI.Text(
+    'If you touch here first you win\n' +
+    'Or pretend you did cause\n' +
+    'there is nothing',
+    {
+      fontSize: 32,
+      fill: '#FF0000'
+    }
+  )
+  txt.scale.set(0.02, 0.02)
+  txt.position.set(gameMap.width + 1, 5)
+  wview.view.addChild(txt)
+}
+
+let lastFrameSent = 0
+
 app.ticker.add((dt) => {
   // dt is referred to the target speed, so it's not a time, but a normalized delta
   // Game loop
 
-  const ioData = {
-    speed: app.keyInput.axis2d('a', 'd'),
-    rocket: app.keyInput.axis2d('s', 'w')
+  let ioData = {}
+  if (isHost) {
+    ioData = {
+      speed: app.keyInput.axis2d('a', 'd'),
+      rocket: app.keyInput.axis2d('s', 'w')
+    }
+  } else {
+    ioData = {
+      remote_speed: app.keyInput.axis2d('a', 'd'),
+      remote_rocket: app.keyInput.axis2d('s', 'w')
+    }
   }
 
-  handler.stepLocal(ioData)
+  const ev = handler.stepLocal(ioData)
+  if (ev !== undefined) {
+    // Send the event!
+    rtc.channel.send(JSON.stringify(ev))
+    lastFrameSent = ev.frame
+  } else {
+    const currFrame = handler.getCurrFrame()
+    if (currFrame - lastFrameSent > 20) {
+      const dummyEv: IORemoteEvent = { frame: currFrame }
+      rtc.channel.send(JSON.stringify(dummyEv))
+      lastFrameSent = dummyEv.frame
+    }
+  }
 
+  /*
   {
     const sureFrame = handler.getSureFrame()
     const currFrame = handler.getCurrFrame()
@@ -131,9 +251,25 @@ app.ticker.add((dt) => {
       }
     }
   }
+  */
+
+  {
+    setContextWorld(handler.getCurrWorld())
+    const myCarBody = (isHost ? car : car2).getBody().get()
+
+    worldCamera.position.copyFrom(
+      PM.add(
+        PM.mulS(PM.P(app.screen.width, app.screen.height), .5),
+        PM.mulS(myCarBody.translation(), -wview.mToP)
+      )
+    )
+
+    playerMarker.position.copyFrom(myCarBody.translation())
+    playerMarker.rotation = myCarBody.rotation()
+  }
 
   wview.debugRender(handler.getCurrWorld())
-  wviewOld.debugRender(handler.getSureWorld(), { r: 0, g: 255, b: 0 })
+  wviewOld.debugRender(handler.getSureWorld(), { r: 0, g: 50, b: 0 })
 
   r.update(dt)
 

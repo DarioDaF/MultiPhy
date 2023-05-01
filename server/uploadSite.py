@@ -8,16 +8,13 @@ from conninfo import myServer
 
 cdir = os.path.dirname(os.path.realpath(__file__))
 
-def execWithOutput(cl: paramiko.SSHClient, cmd: str):
-  _, stdout, stderr = cl.exec_command(cmd)
-  sys.stdout.write(stdout.read().decode())
-  sys.stderr.write(stderr.read().decode())
-
 def cpDirToSFTP(sftp: paramiko.SFTPClient, source, dest):
   RemotePath = SFTPPathFactory(sftp)
 
   blp = OSPath(source)
   brp = RemotePath(dest)
+
+  sftp_makedirs(sftp, brp)
 
   for root, ds, fs in os.walk(str(blp), topdown=True):
     lp_root = OSPath(root)
@@ -35,10 +32,8 @@ def cpDirToSFTP(sftp: paramiko.SFTPClient, source, dest):
 with paramiko.SSHClient() as cl:
   cl.set_missing_host_key_policy(paramiko.MissingHostKeyPolicy)
   cl.connect(myServer.host, myServer.port, myServer.user, pkey=myServer.pkey())
-  print('Stopping service...')
-  execWithOutput(cl, 'tmux send-keys -t wsshare C-c') # Kill remote server
-  print('Sending program...')
+  print('Sending site...')
   with cl.open_sftp() as sftp:
-    cpDirToSFTP(sftp, os.path.join(cdir, 'wsshare'), './wsshare') # Copy new program
-  print('Restarting service...')
-  execWithOutput(cl, 'tmux new-session -d -s wsshare "cd ~/wsshare && go run *.go"') # Restart remote server
+    sftp.put(os.path.join(cdir, '..', 'index.html'), '/var/www/html/index.html')
+    cpDirToSFTP(sftp, os.path.join(cdir, '..', 'assets'), '/var/www/html/assets')
+    cpDirToSFTP(sftp, os.path.join(cdir, '..', 'dist'), '/var/www/html/dist')

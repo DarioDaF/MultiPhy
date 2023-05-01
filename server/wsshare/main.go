@@ -71,7 +71,7 @@ func wsEndpoint(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	wantedRoom := r.URL.Query().Get("room")
-	forceHost := r.URL.Query().Has("forceHost")
+	forceHost := r.URL.Query().Get("forceHost") != ""
 
 	// Upgrade connection to a WebSocket
 	ws, err := upgrader.Upgrade(w, r, nil)
@@ -79,6 +79,8 @@ func wsEndpoint(w http.ResponseWriter, r *http.Request) {
 		log.Println(err)
 		return
 	}
+
+	defer ws.Close()
 
 	isHost := forceHost || (wantedRoom == "")
 

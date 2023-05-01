@@ -24,6 +24,12 @@ export class SimWorldView {
 
   // If you are running this `g` MUST be a child of `view`
   private _dbgGraphics?: PIXI.Graphics
+  prepareDbgGraphics() {
+    if (this._dbgGraphics === undefined) {
+      this._dbgGraphics = new PIXI.Graphics()
+      this.view.addChild(this._dbgGraphics)
+    }
+  }
   removeDbgGraphics() {
     /*
     if (this._dbgGraphics !== undefined) {

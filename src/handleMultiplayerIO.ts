@@ -123,11 +123,11 @@ export class HandleMultyplayerIO {
 
     if (diff !== undefined)
       this.sureState.addEvent({ frame, diff }) // This SHOULD also guarantee it's all OK up to frame!!!
-    console.log("Forwarding Sure State")
+    //console.log("Forwarding Sure State")
     //;(this.sureState.snapshot.world as any)._event = "forwardingSure"
     this.sureState.forward(frame) // So advance there
     //;(this.sureState.snapshot.world as any)._event = undefined
-    console.log("Done Forwarding Sure State")
+    //console.log("Done Forwarding Sure State")
 
     if (diff === undefined)
       return
@@ -135,6 +135,7 @@ export class HandleMultyplayerIO {
     // If the diff was not empty the world needs rollback
     const currFrame = this.currState.getFrame()
     this.currState.makeCopyFrom(this.sureState)
-    this.currState.forward(currFrame)
+    if (currFrame < this.currState.getFrame())
+      this.currState.forward(currFrame)
   }
 }
