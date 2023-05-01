@@ -1,0 +1,17 @@
+{
+  "dependencies": {
+    "@dimforge/rapier2d": "^0.11.2",
+    "pixi.js": "^7.2.4"
+  },
+  "devDependencies": {
+    "concurrently": "^8.0.1",
+    "esbuild": "^0.17.16",
+    "esbuild-plugin-tsc": "^0.3.1",
+    "typescript": "^5.0.4"
+  },
+  "scripts": {
+    "build": "node build.mjs",
+    "watch": "node build.mjs --watch",
+    "serve": "node build.mjs --watch --serve"
+  }
+}
