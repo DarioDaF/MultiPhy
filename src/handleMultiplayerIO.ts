@@ -135,7 +135,9 @@ export class HandleMultyplayerIO {
     // If the diff was not empty the world needs rollback
     const currFrame = this.currState.getFrame()
     this.currState.makeCopyFrom(this.sureState)
-    if (currFrame < this.currState.getFrame())
+    if (currFrame > this.currState.getFrame()) {
+      // @TODO: Should also slow down client tho...
       this.currState.forward(currFrame)
+    }
   }
 }
