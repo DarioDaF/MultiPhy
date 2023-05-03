@@ -111,6 +111,16 @@ export class HandleMultyplayerIO {
     const localDiff = diffData(this.currState.state, state)
     if (localDiff !== undefined) {
       ev = { frame: this.currState.getFrame(), diff: localDiff }
+      {
+        // What if frame is not in sync?
+        const sureFrame = this.sureState.getFrame()
+        const currFrame = this.sureState.getFrame()
+        if (sureFrame > currFrame) {
+          // @TODO: Should never happen but does?
+          this.currState.forward(sureFrame)
+          ev.frame = sureFrame
+        }
+      }
       this.currState.applyEvent(ev) // currState doesn't need events in queue! (so directly apply them)
       this.sureState.addEvent(ev)
     }
